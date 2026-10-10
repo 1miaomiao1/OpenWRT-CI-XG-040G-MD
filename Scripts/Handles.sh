@@ -72,3 +72,24 @@ if [ -f "$RUST_FILE" ]; then
 
 	cd $PKG_PATH && echo "rust has been fixed!"
 fi
+
+# PLOAM debug: dump 0x01/0x04 raw for preassigned-delay analysis (G.987.3)
+PON_PLOAM=$(find ../feeds/pon_drivers/ -maxdepth 4 -type f -wholename "*/airoha-xpon/src/airoha-xpon-ploam.c" 2>/dev/null | head -n 1)
+if [ -f "$PON_PLOAM" ]; then
+  echo "patching $PON_PLOAM"
+  python3 - "$PON_PLOAM" <<'PY'
+import sys
+path = sys.argv[1]
+src = open(path).read()
+old1 = "\tu32 preamble_reg, delimiter_reg;\n\tint ret;\n\n\tif (line_rate || delimiter_len > 8 || preamble_len > 8)"
+new1 = "\tu32 preamble_reg, delimiter_reg;\n\tint ret;\n\n\tdev_info(xpon->dev, \"PLOAM-DBG 0x01 raw: %*phN\\n\", AIROHA_XGPON_PLOAMD_BYTES, message);\n\tdev_info(xpon->dev, \"PLOAM-DBG 0x01 overhead: byte7=0x%02x (bit5 preassign_en=%u) bytes8-9=0x%02x%02x (%u)\\n\", message[7], !!(message[7] & BIT(5)), message[8], message[9], (unsigned int)((message[8] << 8) | message[9]));\n\n\tif (line_rate || delimiter_len > 8 || preamble_len > 8)"
+assert src.count(old1) == 1, f"loc1={src.count(old1)}"
+src = src.replace(old1, new1)
+old2 = "\tbool positive = !(message[4] & BIT(1));\n\n\tif (xpon->onu_state == AIROHA_XGPON_O4) {"
+new2 = "\tbool positive = !(message[4] & BIT(1));\n\n\tdev_info(xpon->dev, \"PLOAM-DBG 0x04 raw: %*phN (dest=%u absolute=%u positive=%u eqd=0x%08x state=%d)\\n\", AIROHA_XGPON_PLOAMD_BYTES, message, dest, absolute, positive, eqd, xpon->onu_state);\n\n\tif (xpon->onu_state == AIROHA_XGPON_O4) {"
+assert src.count(old2) == 1, f"loc2={src.count(old2)}"
+src = src.replace(old2, new2)
+open(path, "w").write(src)
+print("ploam debug injected")
+PY
+fi
